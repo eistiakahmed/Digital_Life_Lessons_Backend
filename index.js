@@ -141,6 +141,41 @@ async function run() {
       }
     });
 
+    // Get top contributors
+    app.get('/users/top-contributors', async (req, res) => {
+      try {
+        const result = await lessonCollections
+          .aggregate([
+            { $match: { privacy: 'Public' } },
+            {
+              $group: {
+                _id: '$authorEmail',
+                lessonsCount: { $sum: 1 },
+                totalViews: { $sum: '$views' },
+                totalLikes: { $sum: '$likesCount' },
+                name: { $first: '$authorName' },
+                image: { $first: '$authorImage' },
+                email: { $first: '$authorEmail' },
+              },
+            },
+            { $sort: { lessonsCount: -1 } },
+            { $limit: 10 },
+          ])
+          .toArray();
+
+        for (let contributor of result) {
+          const user = await userCollection.findOne({
+            email: contributor.email,
+          });
+          contributor.isPremium = user?.isPremium || false;
+        }
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     //==========================Lessons========================================//
 
     // Get all lessons or filter by author email

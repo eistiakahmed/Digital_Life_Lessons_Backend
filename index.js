@@ -144,6 +144,49 @@ async function run() {
       res.send({ url: session.url });
     });
 
+    // payment success
+    app.patch('/payment_success', async (req, res) => {
+      try {
+        const sessionId = req.query.session_id;
+        if (!sessionId)
+          return res.status(400).send({ error: 'session_id is required' });
+
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
+        console.log(session);
+
+        if (session.payment_status === 'paid') {
+          const email = session.customer_email;
+          if (!email)
+            return res
+              .status(400)
+              .send({ error: 'No customer email found in session' });
+
+          const result = await userCollection.updateOne(
+            { email: email },
+            { $set: { isPremium: true, updatedAt: new Date() } }
+          );
+
+          if (result.modifiedCount > 0) {
+            return res.send({
+              success: true,
+              message: 'User upgraded to premium',
+            });
+          } else {
+            return res
+              .status(404)
+              .send({ success: false, message: 'User not found' });
+          }
+        } else {
+          return res
+            .status(400)
+            .send({ success: false, message: 'Payment not completed' });
+        }
+      } catch (error) {
+        console.error(error);
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     await client.db('admin').command({ ping: 1 });
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'

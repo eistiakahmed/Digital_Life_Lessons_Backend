@@ -75,6 +75,51 @@ async function run() {
       }
     });
 
+    // Update user profile & sync lessons
+    app.put('/user/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { displayName, photoURL, ...rest } = req.body;
+
+        // Step 1:  Update user
+        const userUpdate = await userCollection.updateOne(
+          { email },
+          {
+            $set: {
+              displayName,
+              photoURL,
+              ...rest,
+              updatedAt: new Date(),
+            },
+          }
+        );
+
+        // Step 2️: Update all lessons of this user
+        await lessonCollections.updateMany(
+          { authorEmail: email },
+          {
+            $set: {
+              authorName: displayName,
+              authorImage: photoURL,
+            },
+          }
+        );
+
+        if (userUpdate.matchedCount === 0) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+
+        const updatedUser = await userCollection.findOne({ email });
+
+        res.send({
+          message: 'Profile & lessons updated successfully',
+          user: updatedUser,
+        });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     // Update user premium status
     app.patch('/user/premium/:email', async (req, res) => {
       try {

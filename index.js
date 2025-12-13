@@ -38,38 +38,61 @@ async function run() {
       res.send(result);
     });
 
-    app.post('/user', async (req, res) => {
-      const user = req.body;
-      user.createdAt = new Date();
-      const email = user.email;
-      const userExists = await userCollection.findOne({ email });
-
-      if (userExists) {
-        return res.send({ message: 'user exists' });
+    // Get user by email
+    app.get('/user/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const result = await userCollection.findOne({ email });
+        if (!result) {
+          return res.status(404).send({ message: 'User not found' });
+        }
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
       }
-
-      const result = await userCollection.insertOne(user);
-      res.send(result);
     });
 
-    app.patch('/user/premium/:email', async (req, res) => {
-      const { email } = req.params;
-      const { isPremium } = req.body;
-
+    // Create or update user
+    app.post('/user', async (req, res) => {
       try {
+        const user = req.body;
+        user.createdAt = new Date();
+        const email = user.email;
+
+        const userExists = await userCollection.findOne({ email });
+        if (userExists) {
+          return res.send({ message: 'user exists', user: userExists });
+        }
+
+        // Set default values
+        user.isPremium = user.isPremium || false;
+        user.role = user.role || 'user';
+
+        const result = await userCollection.insertOne(user);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Update user premium status
+    app.patch('/user/premium/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { isPremium } = req.body;
+
         const result = await userCollection.updateOne(
           { email },
-          { $set: { isPremium: isPremium } }
+          { $set: { isPremium: isPremium, updatedAt: new Date() } }
         );
 
         if (result.modifiedCount > 0) {
           res.send({ message: 'User premium status updated successfully' });
         } else {
-          res.send({ message: 'No user updated' });
+          res.status(404).send({ message: 'User not found' });
         }
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ message: 'Server error' });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
       }
     });
 
@@ -119,29 +142,36 @@ async function run() {
     //==========================Payment=============================//
 
     app.post('/create-checkout-session', async (req, res) => {
-      const paymentInfo = req.body;
+      try {
+        const paymentInfo = req.body;
+        // console.log(paymentInfo)
 
-      const session = await stripe.checkout.sessions.create({
-        line_items: [
-          {
-            price_data: {
-              currency: 'usd',
-              product_data: {
-                name: 'Life Lessons Premium Membership',
+        const session = await stripe.checkout.sessions.create({
+          line_items: [
+            {
+              price_data: {
+                currency: 'usd',
+                product_data: {
+                  name: 'Life Lessons Premium Membership',
+                  description: 'Lifetime access to all premium features',
+                },
+                unit_amount: 1500,
               },
-              unit_amount: 150000,
+              quantity: 1,
             },
-            quantity: 1,
-          },
-        ],
-        customer_email: paymentInfo.authorEmail,
-        mode: 'payment',
-        success_url: `${process.env.SITE_DOMAIN}/dashboard/payment_success`,
-        cancel_url: `${process.env.SITE_DOMAIN}/dashboard/payment_cancelled`,
-      });
+          ],
+          customer_email: paymentInfo.authorEmail,
+          mode: 'payment',
+          success_url: `${process.env.SITE_DOMAIN}/dashboard/payment_success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.SITE_DOMAIN}/payment/payment-cancelled`,
+        });
 
-      console.log(session);
-      res.send({ url: session.url });
+        // console.log(session)
+
+        res.send({ url: session.url });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     // payment success

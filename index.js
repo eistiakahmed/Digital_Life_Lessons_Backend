@@ -457,6 +457,37 @@ async function run() {
       }
     });
 
+    //========================== Comment APIs ====================================//
+
+    // Get lesson comments
+    app.get('/lessons/:id/comments', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await commentCollection
+          .find({ lessonId: new ObjectId(id) })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Add comment
+    app.post('/lessons/:id/comments', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const comment = req.body;
+        comment.lessonId = new ObjectId(id);
+        comment.createdAt = new Date();
+
+        const result = await commentCollection.insertOne(comment);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     //==========================Payment=============================//
 
     app.post('/create-checkout-session', async (req, res) => {

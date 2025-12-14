@@ -274,32 +274,187 @@ async function run() {
       }
     });
 
+    // Get user's lessons
+    app.get('/lessons/user/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const result = await lessonCollections
+          .find({ authorEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get lesson by ID
+    app.get('/lessons/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const result = await lessonCollections.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!result) {
+          return res.status(404).send({ message: 'Lesson not found' });
+        }
+
+        // Increment view count
+        await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { views: 1 } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get similar lessons
+    app.get('/lessons/similar', async (req, res) => {
+      try {
+        const { category, emotion, exclude } = req.query;
+
+        const query = {
+          privacy: 'Public',
+          _id: { $ne: new ObjectId(exclude) },
+          $or: [{ category: category }, { emotion: emotion }],
+        };
+
+        const result = await lessonCollections.find(query).limit(6).toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     // Create lesson
     app.post('/lessons', async (req, res) => {
-      const lesson = req.body;
-      const result = await lessonCollections.insertOne(lesson);
-      res.send(result);
+      try {
+        const lesson = req.body;
+        lesson.createdAt = new Date();
+        lesson.views = 0;
+        lesson.likesCount = 0;
+        lesson.favoritesCount = 0;
+        lesson.likes = [];
+        lesson.isFeatured = false;
+
+        const result = await lessonCollections.insertOne(lesson);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     // Update lesson by ID
     app.put('/lessons/:id', async (req, res) => {
-      const { id } = req.params;
-      const updateData = req.body;
+      try {
+        const { id } = req.params;
+        const updateData = req.body;
+        updateData.updatedAt = new Date();
 
-      const filter = { _id: new ObjectId(id) };
-      const updateDoc = { $set: updateData };
+        const filter = { _id: new ObjectId(id) };
+        const updateDoc = { $set: updateData };
 
-      const result = await lessonCollection.updateOne(filter, updateDoc);
-      res.send(result);
+        const result = await lessonCollections.updateOne(filter, updateDoc);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Update lesson privacy
+    app.patch('/lessons/privacy/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { privacy } = req.body;
+
+        const result = await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { privacy, updatedAt: new Date() } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Update lesson access level
+    app.patch('/lessons/access/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { accessLevel } = req.body;
+
+        const result = await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { accessLevel, updatedAt: new Date() } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     // Delete lesson by ID
     app.delete('/lessons/:id', async (req, res) => {
-      const { id } = req.params;
-      const query = { _id: new ObjectId(id) };
+      try {
+        const { id } = req.params;
+        const query = { _id: new ObjectId(id) };
 
-      const result = await lessonCollections.deleteOne(query);
-      res.send(result);
+        await commentCollection.deleteMany({ lessonId: new ObjectId(id) });
+        await favoriteCollection.deleteMany({ lessonId: new ObjectId(id) });
+
+        const result = await lessonCollections.deleteOne(query);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Like lesson
+    app.post('/lessons/:id/like', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { userId } = req.body;
+
+        const lesson = await lessonCollections.findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!lesson) {
+          return res.status(404).send({ message: 'Lesson not found' });
+        }
+
+        const likes = lesson.likes || [];
+        const isLiked = likes.includes(userId);
+
+        let updateOperation;
+        if (isLiked) {
+          updateOperation = {
+            $pull: { likes: userId },
+            $inc: { likesCount: -1 },
+          };
+        } else {
+          updateOperation = {
+            $addToSet: { likes: userId },
+            $inc: { likesCount: 1 },
+          };
+        }
+
+        const result = await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          updateOperation
+        );
+
+        res.send({ success: true, isLiked: !isLiked });
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     //==========================Payment=============================//

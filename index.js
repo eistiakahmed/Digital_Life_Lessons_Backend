@@ -191,6 +191,89 @@ async function run() {
       res.send(result);
     });
 
+    // Get public lessons with search, filter, and sort
+    app.get('/lessons/public', async (req, res) => {
+      try {
+        const {
+          category,
+          emotion,
+          search,
+          sort = 'newest',
+          page = 1,
+          limit = 20,
+        } = req.query;
+
+        let query = { privacy: 'Public' };
+
+        if (category && category !== 'All') {
+          query.category = category;
+        }
+        if (emotion && emotion !== 'All') {
+          query.emotion = emotion;
+        }
+        if (search) {
+          query.$or = [
+            { title: { $regex: search, $options: 'i' } },
+            { description: { $regex: search, $options: 'i' } },
+          ];
+        }
+
+        let sortOrder = { createdAt: -1 };
+        switch (sort) {
+          case 'oldest':
+            sortOrder = { createdAt: 1 };
+            break;
+          case 'mostViewed':
+            sortOrder = { views: -1 };
+            break;
+          case 'mostSaved':
+            sortOrder = { favoritesCount: -1 };
+            break;
+        }
+
+        const skip = (parseInt(page) - 1) * parseInt(limit);
+
+        const result = await lessonCollections
+          .find(query)
+          .sort(sortOrder)
+          .skip(skip)
+          .limit(parseInt(limit))
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get featured lessons
+    app.get('/lessons/featured', async (req, res) => {
+      try {
+        const result = await lessonCollections
+          .find({ isFeatured: true, privacy: 'Public' })
+          .sort({ createdAt: -1 })
+          .limit(6)
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get most saved lessons
+    app.get('/lessons/most-saved', async (req, res) => {
+      try {
+        const result = await lessonCollections
+          .find({ privacy: 'Public' })
+          .sort({ favoritesCount: -1 })
+          .limit(6)
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     // Create lesson
     app.post('/lessons', async (req, res) => {
       const lesson = req.body;

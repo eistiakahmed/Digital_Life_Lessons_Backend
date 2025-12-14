@@ -568,6 +568,21 @@ async function run() {
       }
     });
 
+    //========================== Report APIs ====================================//
+
+    // Report lesson
+    app.post('/lessons/report', async (req, res) => {
+      try {
+        const report = req.body;
+        report.createdAt = new Date();
+
+        const result = await reportCollection.insertOne(report);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     //==========================Payment=============================//
 
     app.post('/create-checkout-session', async (req, res) => {

@@ -26,16 +26,23 @@ app.get('/', (req, res) => {
 async function run() {
   try {
     await client.connect();
-
     const db = client.db('DigitalLifeLessons');
     const lessonCollections = db.collection('lessonCollection');
     const userCollection = db.collection('userCollection');
+    const commentCollection = db.collection('commentCollection');
+    const favoriteCollection = db.collection('favoriteCollection');
+    const reportCollection = db.collection('reportCollection');
 
-    //==========================User======================================//
+    //========================== User APIs ======================================//
 
+    // Get all users
     app.get('/users', async (req, res) => {
-      const result = await userCollection.find().toArray();
-      res.send(result);
+      try {
+        const result = await userCollection.find().toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
     });
 
     // Get user by email
@@ -176,19 +183,26 @@ async function run() {
       }
     });
 
-    //==========================Lessons========================================//
+    //========================== Lesson APIs ========================================//
 
-    // Get all lessons or filter by author email
+    // Get all lessons with filters
     app.get('/lessons', async (req, res) => {
-      const query = {};
-      const { email } = req.query;
+      try {
+        const { email } = req.query;
+        const query = {};
 
-      if (email) {
-        query.authorEmail = email;
+        if (email) {
+          query.authorEmail = email;
+        }
+
+        const result = await lessonCollections
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
       }
-
-      const result = await lessonCollections.find().toArray();
-      res.send(result);
     });
 
     // Get public lessons with search, filter, and sort
@@ -218,7 +232,7 @@ async function run() {
           ];
         }
 
-        let sortOrder = { createdAt: -1 };
+        let sortOrder = { createdAt: -1 }; // default: newest
         switch (sort) {
           case 'oldest':
             sortOrder = { createdAt: 1 };
@@ -457,7 +471,7 @@ async function run() {
       }
     });
 
-    //======================== Comment APIs ===========================//
+    //========================== Comment APIs ====================================//
 
     // Get lesson comments
     app.get('/lessons/:id/comments', async (req, res) => {
@@ -488,7 +502,7 @@ async function run() {
       }
     });
 
-    //======================== Favorite APIs ==========================//
+    //========================== Favorite APIs ===================================//
 
     // Add to favorites
     app.post('/lessons/:id/favorite', async (req, res) => {
@@ -583,7 +597,7 @@ async function run() {
       }
     });
 
-    //==========================Payment=============================//
+    //========================== Payment APIs ===================================//
 
     app.post('/create-checkout-session', async (req, res) => {
       try {
@@ -661,6 +675,149 @@ async function run() {
       }
     });
 
+    //========================== Admin APIs ====================================//
+
+    // Get all lessons (Admin)
+    app.get('/admin/lessons', async (req, res) => {
+      try {
+        const result = await lessonCollections
+          .find()
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Toggle featured status (Admin)
+    app.patch('/admin/lessons/:id/featured', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { isFeatured } = req.body;
+
+        const result = await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { isFeatured, updatedAt: new Date() } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get reported lessons (Admin)
+    app.get('/admin/reported-lessons', async (req, res) => {
+      try {
+        const result = await reportCollection
+          .aggregate([
+            {
+              $lookup: {
+                from: 'lessonCollection',
+                localField: 'lessonId',
+                foreignField: '_id',
+                as: 'lesson',
+              },
+            },
+            {
+              $group: {
+                _id: '$lessonId',
+                reportCount: { $sum: 1 },
+                reports: { $push: '$$ROOT' },
+                lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
+              },
+            },
+            { $sort: { reportCount: -1 } },
+          ])
+          .toArray();
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Update user role (Admin)
+    app.patch('/admin/users/:email/role', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const { role } = req.body;
+
+        const result = await userCollection.updateOne(
+          { email },
+          { $set: { role, updatedAt: new Date() } }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ message: 'User role updated successfully' });
+        } else {
+          res.status(404).send({ message: 'User not found' });
+        }
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Delete user (Admin)
+    app.delete('/admin/users/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+
+        // Delete user's lessons
+        await lessonCollections.deleteMany({ authorEmail: email });
+
+        // Delete user's comments
+        await commentCollection.deleteMany({ authorEmail: email });
+
+        // Delete user's favorites
+        await favoriteCollection.deleteMany({ userEmail: email });
+
+        // Delete user's reports
+        await reportCollection.deleteMany({ reporterEmail: email });
+
+        // Delete user
+        const result = await userCollection.deleteOne({ email });
+
+        if (result.deletedCount > 0) {
+          res.send({
+            message: 'User and all associated data deleted successfully',
+          });
+        } else {
+          res.status(404).send({ message: 'User not found' });
+        }
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Resolve report (Admin)
+    app.patch('/admin/reports/:id/resolve', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { action } = req.body;
+
+        const result = await reportCollection.updateOne(
+          { _id: new ObjectId(id) },
+          {
+            $set: {
+              resolved: true,
+              resolvedAt: new Date(),
+              action: action,
+            },
+          }
+        );
+
+        if (result.modifiedCount > 0) {
+          res.send({ message: 'Report resolved successfully' });
+        } else {
+          res.status(404).send({ message: 'Report not found' });
+        }
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
     await client.db('admin').command({ ping: 1 });
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
@@ -669,8 +826,9 @@ async function run() {
     // await client.close();
   }
 }
+
 run().catch(console.dir);
 
 app.listen(port, () => {
-  console.log(`Digital Life Lessons is running port: ${port}`);
+  console.log(`Digital Life Lessons is running on port: ${port}`);
 });

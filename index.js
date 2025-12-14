@@ -457,7 +457,7 @@ async function run() {
       }
     });
 
-    //========================== Comment APIs ====================================//
+    //======================== Comment APIs ===========================//
 
     // Get lesson comments
     app.get('/lessons/:id/comments', async (req, res) => {
@@ -482,6 +482,86 @@ async function run() {
         comment.createdAt = new Date();
 
         const result = await commentCollection.insertOne(comment);
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    //======================== Favorite APIs ==========================//
+
+    // Add to favorites
+    app.post('/lessons/:id/favorite', async (req, res) => {
+      try {
+        const { id } = req.params;
+        const { userId, userEmail } = req.body;
+
+        // Check if already favorite
+        const existingFavorite = await favoriteCollection.findOne({
+          lessonId: new ObjectId(id),
+          userEmail: userEmail,
+        });
+
+        if (existingFavorite) {
+          return res.send({ message: 'Already favorite' });
+        }
+
+        // Get lesson details
+        const lesson = await lessonCollections.findOne({
+          _id: new ObjectId(id),
+        });
+
+        const favorite = {
+          lessonId: new ObjectId(id),
+          userEmail: userEmail,
+          lesson: lesson,
+          createdAt: new Date(),
+        };
+
+        const result = await favoriteCollection.insertOne(favorite);
+
+        // Increment favorites count in lesson
+        await lessonCollections.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { favoritesCount: 1 } }
+        );
+
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Get user's favorites
+    app.get('/favorites/user/:email', async (req, res) => {
+      try {
+        const { email } = req.params;
+        const result = await favoriteCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+        res.send(result);
+      } catch (error) {
+        res.status(500).send({ error: error.message });
+      }
+    });
+
+    // Remove from favorites
+    app.delete('/favorites/:lessonId', async (req, res) => {
+      try {
+        const { lessonId } = req.params;
+        const { userEmail } = req.body;
+
+        const result = await favoriteCollection.deleteOne({
+          lessonId: new ObjectId(lessonId),
+          userEmail: userEmail,
+        });
+
+        await lessonCollections.updateOne(
+          { _id: new ObjectId(lessonId) },
+          { $inc: { favoritesCount: -1 } }
+        );
+
         res.send(result);
       } catch (error) {
         res.status(500).send({ error: error.message });

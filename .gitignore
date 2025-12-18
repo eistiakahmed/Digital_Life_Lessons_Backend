@@ -1,4 +1,4 @@
 .env
-data.json
 node_modules
-test.js
+firebase_adminSDK.json
+.vercel

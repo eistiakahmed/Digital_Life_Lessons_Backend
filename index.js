@@ -3,12 +3,44 @@ const cors = require('cors');
 require('dotenv').config();
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-
 const app = express();
 const port = process.env.PORT || 3000;
+const admin = require('firebase-admin');
 
+const decoded = Buffer.from(process.env.FB_SERVICE_KEY, 'base64').toString(
+  'utf8'
+);
+const serviceAccount = JSON.parse(decoded);
+
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+}
+
+// middleware
 app.use(cors());
 app.use(express.json());
+
+const verifyFBToken = async (req, res, next) => {
+  // console.log('headers in the middleware', req.headers.authorization);
+  const token = req.headers.authorization;
+
+  if (!token) {
+    return res.status(401).send({ message: 'unauthorized access' });
+  }
+
+  try {
+    const idToken = token.split(' ')[1];
+    const decoded = await admin.auth().verifyIdToken(idToken);
+    // console.log('decoded in token', decoded);
+    req.decoded_email = decoded.email;
+
+    next();
+  } catch (err) {
+    return res.status(401).send({ message: 'unauthorized access' });
+  }
+};
 
 const uri = process.env.MONGO_uri;
 const client = new MongoClient(uri, {
@@ -24,8 +56,8 @@ app.get('/', (req, res) => {
 });
 
 async function run() {
+  // await client.connect();
   try {
-    await client.connect();
     const db = client.db('DigitalLifeLessons');
     const lessonCollections = db.collection('lessonCollection');
     const userCollection = db.collection('userCollection');
@@ -33,10 +65,23 @@ async function run() {
     const favoriteCollection = db.collection('favoriteCollection');
     const reportCollection = db.collection('reportCollection');
 
-    //========================== User APIs ======================================//
+    // middleware admin before allowing admin activity
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decoded_email;
+      const query = { email };
+      const user = await userCollection.findOne(query);
+
+      if (!user || user.role !== 'admin') {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
+
+      next();
+    };
+
+    //========================== User APIs ===============================//
 
     // Get all users
-    app.get('/users', async (req, res) => {
+    app.get('/users', verifyFBToken, verifyAdmin, async (req, res) => {
       try {
         const result = await userCollection.find().toArray();
         res.send(result);
@@ -83,7 +128,10 @@ async function run() {
     });
 
     // Update user profile & sync lessons
-    app.put('/user/:email', async (req, res) => {
+    app.put('/user/:email', verifyFBToken, async (req, res) => {
+      if (req.params.email !== req.decoded_email) {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
       try {
         const { email } = req.params;
         const { displayName, photoURL, ...rest } = req.body;
@@ -128,7 +176,7 @@ async function run() {
     });
 
     // Update user premium status
-    app.patch('/user/premium/:email', async (req, res) => {
+    app.patch('/user/premium/:email', verifyFBToken, async (req, res) => {
       try {
         const { email } = req.params;
         const { isPremium } = req.body;
@@ -183,16 +231,19 @@ async function run() {
       }
     });
 
-    //========================== Lesson APIs ========================================//
+    //========================== Lesson APIs =================================//
 
     // Get all lessons with filters
-    app.get('/lessons', async (req, res) => {
+    app.get('/lessons', verifyFBToken, async (req, res) => {
       try {
         const { email } = req.query;
         const query = {};
 
         if (email) {
           query.authorEmail = email;
+          if (email !== req.decoded_email) {
+            return res.status(403).send({ message: 'forbidden access' });
+          }
         }
 
         const result = await lessonCollections
@@ -232,7 +283,7 @@ async function run() {
           ];
         }
 
-        let sortOrder = { createdAt: -1 }; // default: newest
+        let sortOrder = { createdAt: -1 };
         switch (sort) {
           case 'oldest':
             sortOrder = { createdAt: 1 };
@@ -302,45 +353,69 @@ async function run() {
       }
     });
 
-    // Get lesson by ID
-    app.get('/lessons/:id', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const result = await lessonCollections.findOne({
-          _id: new ObjectId(id),
-        });
-
-        if (!result) {
-          return res.status(404).send({ message: 'Lesson not found' });
-        }
-
-        // Increment view count
-        await lessonCollections.updateOne(
-          { _id: new ObjectId(id) },
-          { $inc: { views: 1 } }
-        );
-
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
     // Get similar lessons
+
     app.get('/lessons/similar', async (req, res) => {
       try {
         const { category, emotion, exclude } = req.query;
 
+        if (!category || !emotion) {
+          return res
+            .status(400)
+            .json({ message: 'category and emotion are required' });
+        }
+
         const query = {
-          privacy: 'Public',
-          _id: { $ne: new ObjectId(exclude) },
-          $or: [{ category: category }, { emotion: emotion }],
+          category,
+          emotion,
         };
 
-        const result = await lessonCollections.find(query).limit(6).toArray();
+        console.log(query._id);
 
-        res.send(result);
+        if (exclude && exclude.trim() !== '') {
+          if (ObjectId.isValid(exclude) && exclude.length === 24) {
+            query._id = { $ne: new ObjectId(exclude) };
+          } else {
+            return res.status(400).json({
+              message:
+                'Invalid exclude ID format. Must be a 24 character hex string.',
+            });
+          }
+        }
+
+        const lessons = await lessonCollections.find(query).limit(6).toArray();
+
+        res.json(lessons);
       } catch (error) {
+        console.error('Error fetching similar lessons:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+      }
+    });
+
+    // Get lesson by ID
+    app.get('/lessons/:id', async (req, res) => {
+      try {
+        const { id } = req.params;
+
+        if (!ObjectId.isValid(id)) {
+          return res.status(400).send({ message: 'Invalid Lesson ID format' });
+        }
+
+        const result = await lessonCollections.findOneAndUpdate(
+          { _id: new ObjectId(id) },
+          { $inc: { views: 1 } },
+          { returnDocument: 'after' }
+        );
+
+        const lesson = result.value || result;
+
+        if (!lesson) {
+          return res.status(404).send({ message: 'Lesson not found' });
+        }
+
+        res.send(lesson);
+      } catch (error) {
+        console.error('Error in GET /lessons/:id:', error);
         res.status(500).send({ error: error.message });
       }
     });
@@ -364,7 +439,7 @@ async function run() {
     });
 
     // Update lesson by ID
-    app.put('/lessons/:id', async (req, res) => {
+    app.put('/lessons/:id', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const updateData = req.body;
@@ -381,7 +456,7 @@ async function run() {
     });
 
     // Update lesson privacy
-    app.patch('/lessons/privacy/:id', async (req, res) => {
+    app.patch('/lessons/privacy/:id', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { privacy } = req.body;
@@ -398,7 +473,7 @@ async function run() {
     });
 
     // Update lesson access level
-    app.patch('/lessons/access/:id', async (req, res) => {
+    app.patch('/lessons/access/:id', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { accessLevel } = req.body;
@@ -415,7 +490,7 @@ async function run() {
     });
 
     // Delete lesson by ID
-    app.delete('/lessons/:id', async (req, res) => {
+    app.delete('/lessons/:id', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const query = { _id: new ObjectId(id) };
@@ -431,7 +506,7 @@ async function run() {
     });
 
     // Like lesson
-    app.post('/lessons/:id/like', async (req, res) => {
+    app.post('/lessons/:id/like', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { userId } = req.body;
@@ -488,7 +563,7 @@ async function run() {
     });
 
     // Add comment
-    app.post('/lessons/:id/comments', async (req, res) => {
+    app.post('/lessons/:id/comments', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const comment = req.body;
@@ -505,7 +580,7 @@ async function run() {
     //========================== Favorite APIs ===================================//
 
     // Add to favorites
-    app.post('/lessons/:id/favorite', async (req, res) => {
+    app.post('/lessons/:id/favorite', verifyFBToken, async (req, res) => {
       try {
         const { id } = req.params;
         const { userId, userEmail } = req.body;
@@ -547,7 +622,7 @@ async function run() {
     });
 
     // Get user's favorites
-    app.get('/favorites/user/:email', async (req, res) => {
+    app.get('/favorites/user/:email', verifyFBToken, async (req, res) => {
       try {
         const { email } = req.params;
         const result = await favoriteCollection
@@ -561,7 +636,7 @@ async function run() {
     });
 
     // Remove from favorites
-    app.delete('/favorites/:lessonId', async (req, res) => {
+    app.delete('/favorites/:lessonId', verifyFBToken, async (req, res) => {
       try {
         const { lessonId } = req.params;
         const { userEmail } = req.body;
@@ -585,7 +660,7 @@ async function run() {
     //========================== Report APIs ====================================//
 
     // Report lesson
-    app.post('/lessons/report', async (req, res) => {
+    app.post('/lessons/report', verifyFBToken, async (req, res) => {
       try {
         const report = req.body;
         report.createdAt = new Date();
@@ -640,7 +715,7 @@ async function run() {
           return res.status(400).send({ error: 'session_id is required' });
 
         const session = await stripe.checkout.sessions.retrieve(sessionId);
-        console.log(session);
+        // console.log(session);
 
         if (session.payment_status === 'paid') {
           const email = session.customer_email;
@@ -678,7 +753,7 @@ async function run() {
     //========================== Admin APIs ====================================//
 
     // Get all lessons (Admin)
-    app.get('/admin/lessons', async (req, res) => {
+    app.get('/admin/lessons', verifyFBToken, async (req, res) => {
       try {
         const result = await lessonCollections
           .find()
@@ -691,134 +766,147 @@ async function run() {
     });
 
     // Toggle featured status (Admin)
-    app.patch('/admin/lessons/:id/featured', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { isFeatured } = req.body;
+    app.patch(
+      '/admin/lessons/:id/featured',
+      verifyFBToken,
+      async (req, res) => {
+        try {
+          const { id } = req.params;
+          const { isFeatured } = req.body;
 
-        const result = await lessonCollections.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: { isFeatured, updatedAt: new Date() } }
-        );
+          const result = await lessonCollections.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: { isFeatured, updatedAt: new Date() } }
+          );
 
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
       }
-    });
+    );
 
     // Get reported lessons (Admin)
-    app.get('/admin/reported-lessons', async (req, res) => {
-      try {
-        const result = await reportCollection
-          .aggregate([
-            {
-              $lookup: {
-                from: 'lessonCollection',
-                localField: 'lessonId',
-                foreignField: '_id',
-                as: 'lesson',
+    app.get(
+      '/admin/reported-lessons',
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const result = await reportCollection
+            .aggregate([
+              {
+                $lookup: {
+                  from: 'lessonCollection',
+                  localField: 'lessonId',
+                  foreignField: '_id',
+                  as: 'lesson',
+                },
               },
-            },
-            {
-              $group: {
-                _id: '$lessonId',
-                reportCount: { $sum: 1 },
-                reports: { $push: '$$ROOT' },
-                lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
+              {
+                $group: {
+                  _id: '$lessonId',
+                  reportCount: { $sum: 1 },
+                  reports: { $push: '$$ROOT' },
+                  lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
+                },
               },
-            },
-            { $sort: { reportCount: -1 } },
-          ])
-          .toArray();
+              { $sort: { reportCount: -1 } },
+            ])
+            .toArray();
 
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
+          res.send(result);
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
       }
-    });
+    );
 
     // Update user role (Admin)
-    app.patch('/admin/users/:email/role', async (req, res) => {
-      try {
-        const { email } = req.params;
-        const { role } = req.body;
+    app.patch(
+      '/admin/users/:email/role',
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { email } = req.params;
+          const { role } = req.body;
 
-        const result = await userCollection.updateOne(
-          { email },
-          { $set: { role, updatedAt: new Date() } }
-        );
+          const result = await userCollection.updateOne(
+            { email },
+            { $set: { role, updatedAt: new Date() } }
+          );
 
-        if (result.modifiedCount > 0) {
-          res.send({ message: 'User role updated successfully' });
-        } else {
-          res.status(404).send({ message: 'User not found' });
-        }
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Delete user (Admin)
-    app.delete('/admin/users/:email', async (req, res) => {
-      try {
-        const { email } = req.params;
-
-        // Delete user's lessons
-        await lessonCollections.deleteMany({ authorEmail: email });
-
-        // Delete user's comments
-        await commentCollection.deleteMany({ authorEmail: email });
-
-        // Delete user's favorites
-        await favoriteCollection.deleteMany({ userEmail: email });
-
-        // Delete user's reports
-        await reportCollection.deleteMany({ reporterEmail: email });
-
-        // Delete user
-        const result = await userCollection.deleteOne({ email });
-
-        if (result.deletedCount > 0) {
-          res.send({
-            message: 'User and all associated data deleted successfully',
-          });
-        } else {
-          res.status(404).send({ message: 'User not found' });
-        }
-      } catch (error) {
-        res.status(500).send({ error: error.message });
-      }
-    });
-
-    // Resolve report (Admin)
-    app.patch('/admin/reports/:id/resolve', async (req, res) => {
-      try {
-        const { id } = req.params;
-        const { action } = req.body;
-
-        const result = await reportCollection.updateOne(
-          { _id: new ObjectId(id) },
-          {
-            $set: {
-              resolved: true,
-              resolvedAt: new Date(),
-              action: action,
-            },
+          if (result.modifiedCount > 0) {
+            res.send({ message: 'User role updated successfully' });
+          } else {
+            res.status(404).send({ message: 'User not found' });
           }
-        );
-
-        if (result.modifiedCount > 0) {
-          res.send({ message: 'Report resolved successfully' });
-        } else {
-          res.status(404).send({ message: 'Report not found' });
+        } catch (error) {
+          res.status(500).send({ error: error.message });
         }
-      } catch (error) {
-        res.status(500).send({ error: error.message });
       }
-    });
+    );
 
-    await client.db('admin').command({ ping: 1 });
+    // Ignore lesson (Admin)
+    app.patch(
+      '/admin/reported-lessons/:lessonId/ignore',
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { lessonId } = req.params;
+
+          const result = await reportCollection.updateMany(
+            { lessonId: new ObjectId(lessonId), resolved: { $ne: true } },
+            {
+              $set: {
+                resolved: true,
+                action: 'ignored',
+                resolvedAt: new Date(),
+              },
+            }
+          );
+
+          res.send({ success: true, message: 'Reports ignored, lesson kept' });
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
+      }
+    );
+
+    // Delete lesson (Admin)
+    app.delete(
+      '/admin/reported-lessons/:lessonId',
+      verifyFBToken,
+      verifyAdmin,
+      async (req, res) => {
+        try {
+          const { lessonId } = req.params;
+
+          // Delete lesson
+          const lessonResult = await lessonCollections.deleteOne({
+            _id: new ObjectId(lessonId),
+          });
+
+          // Delete all associated reports
+          const reportResult = await reportCollection.deleteMany({
+            lessonId: new ObjectId(lessonId),
+          });
+
+          res.send({
+            success: true,
+            message: 'Lesson and all reports deleted successfully',
+            lessonDeleted: lessonResult.deletedCount,
+            reportsDeleted: reportResult.deletedCount,
+          });
+        } catch (error) {
+          res.status(500).send({ error: error.message });
+        }
+      }
+    );
+
+    // await client.db('admin').command({ ping: 1 });
     console.log(
       'Pinged your deployment. You successfully connected to MongoDB!'
     );

@@ -753,158 +753,428 @@ async function run() {
     //========================== Admin APIs ====================================//
 
     // Get all lessons (Admin)
-    app.get('/admin/lessons', verifyFBToken, async (req, res) => {
-      try {
-        const result = await lessonCollections
-          .find()
-          .sort({ createdAt: -1 })
-          .toArray();
-        res.send(result);
-      } catch (error) {
-        res.status(500).send({ error: error.message });
+    // app.get('/admin/lessons', verifyFBToken, async (req, res) => {
+    //   try {
+    //     const result = await lessonCollections
+    //       .find()
+    //       .sort({ createdAt: -1 })
+    //       .toArray();
+    //     res.send(result);
+    //   } catch (error) {
+    //     res.status(500).send({ error: error.message });
+    //   }
+    // });
+
+    // // Toggle featured status (Admin)
+    // app.patch(
+    //   '/admin/lessons/:id/featured',
+    //   verifyFBToken,
+    //   async (req, res) => {
+    //     try {
+    //       const { id } = req.params;
+    //       const { isFeatured } = req.body;
+
+    //       const result = await lessonCollections.updateOne(
+    //         { _id: new ObjectId(id) },
+    //         { $set: { isFeatured, updatedAt: new Date() } }
+    //       );
+
+    //       res.send(result);
+    //     } catch (error) {
+    //       res.status(500).send({ error: error.message });
+    //     }
+    //   }
+    // );
+
+    // // Get reported lessons (Admin)
+    // app.get(
+    //   '/admin/reported-lessons',
+    //   verifyFBToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     try {
+    //       const result = await reportCollection
+    //         .aggregate([
+    //           {
+    //             $lookup: {
+    //               from: 'lessonCollection',
+    //               localField: 'lessonId',
+    //               foreignField: '_id',
+    //               as: 'lesson',
+    //             },
+    //           },
+    //           {
+    //             $group: {
+    //               _id: '$lessonId',
+    //               reportCount: { $sum: 1 },
+    //               reports: { $push: '$$ROOT' },
+    //               lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
+    //             },
+    //           },
+    //           { $sort: { reportCount: -1 } },
+    //         ])
+    //         .toArray();
+
+    //       console.log(result);
+    //       res.send(result);
+    //     } catch (error) {
+    //       res.status(500).send({ error: error.message });
+    //     }
+    //   }
+    // );
+
+    // // Update user role (Admin)
+    // app.patch(
+    //   '/admin/users/:email/role',
+    //   verifyFBToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     try {
+    //       const { email } = req.params;
+    //       const { role } = req.body;
+
+    //       const result = await userCollection.updateOne(
+    //         { email },
+    //         { $set: { role, updatedAt: new Date() } }
+    //       );
+
+    //       if (result.modifiedCount > 0) {
+    //         res.send({ message: 'User role updated successfully' });
+    //       } else {
+    //         res.status(404).send({ message: 'User not found' });
+    //       }
+    //     } catch (error) {
+    //       res.status(500).send({ error: error.message });
+    //     }
+    //   }
+    // );
+
+    // // Ignore lesson (Admin)
+    // app.patch(
+    //   '/admin/reported-lessons/:lessonId/ignore',
+    //   verifyFBToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     try {
+    //       const { lessonId } = req.params;
+
+    //       const result = await reportCollection.updateMany(
+    //         { lessonId: new ObjectId(lessonId), resolved: { $ne: true } },
+    //         {
+    //           $set: {
+    //             resolved: true,
+    //             action: 'ignored',
+    //             resolvedAt: new Date(),
+    //           },
+    //         }
+    //       );
+
+    //       res.send({
+    //         success: true,
+    //         message: 'Reports ignored, lesson kept',
+    //         result,
+    //       });
+    //     } catch (error) {
+    //       res.status(500).send({ error: error.message });
+    //     }
+    //   }
+    // );
+
+
+
+    
+
+    // // Delete lesson (Admin)
+    // app.delete(
+    //   '/admin/reported-lessons/:lessonId',
+    //   verifyFBToken,
+    //   verifyAdmin,
+    //   async (req, res) => {
+    //     try {
+    //       const { lessonId } = req.params;
+
+    //       // Delete lesson
+    //       const lessonResult = await lessonCollections.deleteOne({
+    //         _id: new ObjectId(lessonId),
+    //       });
+
+    //       // Delete all associated reports
+    //       const reportResult = await reportCollection.deleteMany({
+    //         lessonId: new ObjectId(lessonId),
+    //       });
+
+    //       res.send({
+    //         success: true,
+    //         message: 'Lesson and all reports deleted successfully',
+    //         lessonDeleted: lessonResult.deletedCount,
+    //         reportsDeleted: reportResult.deletedCount,
+    //       });
+    //     } catch (error) {
+    //       res.status(500).send({ error: error.message });
+    //     }
+    //   }
+    // );
+
+
+
+    // ========================== Admin APIs ====================================//
+
+// Get all lessons (Admin)
+app.get('/admin/lessons', verifyFBToken, verifyAdmin, async (req, res) => {
+  try {
+    const result = await lessonCollections
+      .find()
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ error: error.message });
+  }
+});
+
+// Toggle featured status (Admin)
+app.patch(
+  '/admin/lessons/:id/featured',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { isFeatured } = req.body;
+
+      const result = await lessonCollections.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { isFeatured, updatedAt: new Date() } }
+      );
+
+      res.send(result);
+    } catch (error) {
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
+
+// Get reported lessons (Admin)
+app.get(
+  '/admin/reported-lessons',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const result = await reportCollection
+        .aggregate([
+          {
+            $lookup: {
+              from: 'lessonCollection',
+              localField: 'lessonId',
+              foreignField: '_id',
+              as: 'lesson',
+            },
+          },
+          {
+            $group: {
+              _id: '$lessonId',
+              reportCount: { $sum: 1 },
+              reports: { $push: '$$ROOT' },
+              lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
+            },
+          },
+          { $sort: { reportCount: -1 } },
+        ])
+        .toArray();
+
+      console.log(result);
+      res.send(result);
+    } catch (error) {
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
+
+// **NEW** Resolve individual report (Admin)
+app.patch(
+  '/admin/reports/:reportId/resolve',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { reportId } = req.params;
+      const { action } = req.body;
+
+      // Validate ObjectId
+      if (!ObjectId.isValid(reportId)) {
+        return res.status(400).send({ message: 'Invalid report ID' });
       }
-    });
 
-    // Toggle featured status (Admin)
-    app.patch(
-      '/admin/lessons/:id/featured',
-      verifyFBToken,
-      async (req, res) => {
-        try {
-          const { id } = req.params;
-          const { isFeatured } = req.body;
-
-          const result = await lessonCollections.updateOne(
-            { _id: new ObjectId(id) },
-            { $set: { isFeatured, updatedAt: new Date() } }
-          );
-
-          res.send(result);
-        } catch (error) {
-          res.status(500).send({ error: error.message });
+      const result = await reportCollection.updateOne(
+        { _id: new ObjectId(reportId) },
+        {
+          $set: {
+            resolved: true,
+            action: action || 'dismissed',
+            resolvedAt: new Date(),
+          },
         }
+      );
+
+      if (result.matchedCount === 0) {
+        return res.status(404).send({ message: 'Report not found' });
       }
-    );
 
-    // Get reported lessons (Admin)
-    app.get(
-      '/admin/reported-lessons',
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const result = await reportCollection
-            .aggregate([
-              {
-                $lookup: {
-                  from: 'lessonCollection',
-                  localField: 'lessonId',
-                  foreignField: '_id',
-                  as: 'lesson',
-                },
-              },
-              {
-                $group: {
-                  _id: '$lessonId',
-                  reportCount: { $sum: 1 },
-                  reports: { $push: '$$ROOT' },
-                  lesson: { $first: { $arrayElemAt: ['$lesson', 0] } },
-                },
-              },
-              { $sort: { reportCount: -1 } },
-            ])
-            .toArray();
+      res.send({
+        success: true,
+        message: 'Report resolved successfully',
+        result,
+      });
+    } catch (error) {
+      console.error('Error resolving report:', error);
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
 
-          res.send(result);
-        } catch (error) {
-          res.status(500).send({ error: error.message });
+// **NEW** Delete lesson by admin (Admin)
+app.delete(
+  '/admin/lessons/:lessonId',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+
+      // Validate ObjectId
+      if (!ObjectId.isValid(lessonId)) {
+        return res.status(400).send({ message: 'Invalid lesson ID' });
+      }
+
+      const lessonObjectId = new ObjectId(lessonId);
+
+      // Delete lesson
+      const lessonResult = await lessonCollections.deleteOne({
+        _id: lessonObjectId,
+      });
+
+      if (lessonResult.deletedCount === 0) {
+        return res.status(404).send({ message: 'Lesson not found' });
+      }
+
+      // Delete all associated data
+      await Promise.all([
+        commentCollection.deleteMany({ lessonId: lessonObjectId }),
+        favoriteCollection.deleteMany({ lessonId: lessonObjectId }),
+        reportCollection.deleteMany({ lessonId: lessonObjectId }),
+      ]);
+
+      res.send({
+        success: true,
+        message: 'Lesson and all associated data deleted successfully',
+        lessonDeleted: lessonResult.deletedCount,
+      });
+    } catch (error) {
+      console.error('Error deleting lesson:', error);
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
+
+// Update user role (Admin)
+app.patch(
+  '/admin/users/:email/role',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { email } = req.params;
+      const { role } = req.body;
+
+      const result = await userCollection.updateOne(
+        { email },
+        { $set: { role, updatedAt: new Date() } }
+      );
+
+      if (result.modifiedCount > 0) {
+        res.send({ message: 'User role updated successfully' });
+      } else {
+        res.status(404).send({ message: 'User not found' });
+      }
+    } catch (error) {
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
+
+// **DEPRECATED - Keep for backward compatibility but prefer the new endpoint above**
+// Ignore lesson reports - ignores all reports for a lesson (Admin)
+app.patch(
+  '/admin/reported-lessons/:lessonId/ignore',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+
+      if (!ObjectId.isValid(lessonId)) {
+        return res.status(400).send({ message: 'Invalid lesson ID' });
+      }
+
+      const result = await reportCollection.updateMany(
+        { lessonId: new ObjectId(lessonId), resolved: { $ne: true } },
+        {
+          $set: {
+            resolved: true,
+            action: 'ignored',
+            resolvedAt: new Date(),
+          },
         }
+      );
+
+      res.send({
+        success: true,
+        message: 'Reports ignored, lesson kept',
+        result,
+      });
+    } catch (error) {
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
+
+// **DEPRECATED - Keep for backward compatibility but prefer the new endpoint above**
+// Delete lesson and reports (Admin)
+app.delete(
+  '/admin/reported-lessons/:lessonId',
+  verifyFBToken,
+  verifyAdmin,
+  async (req, res) => {
+    try {
+      const { lessonId } = req.params;
+
+      if (!ObjectId.isValid(lessonId)) {
+        return res.status(400).send({ message: 'Invalid lesson ID' });
       }
-    );
 
-    // Update user role (Admin)
-    app.patch(
-      '/admin/users/:email/role',
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const { email } = req.params;
-          const { role } = req.body;
+      // Delete lesson
+      const lessonResult = await lessonCollections.deleteOne({
+        _id: new ObjectId(lessonId),
+      });
 
-          const result = await userCollection.updateOne(
-            { email },
-            { $set: { role, updatedAt: new Date() } }
-          );
+      // Delete all associated reports
+      const reportResult = await reportCollection.deleteMany({
+        lessonId: new ObjectId(lessonId),
+      });
 
-          if (result.modifiedCount > 0) {
-            res.send({ message: 'User role updated successfully' });
-          } else {
-            res.status(404).send({ message: 'User not found' });
-          }
-        } catch (error) {
-          res.status(500).send({ error: error.message });
-        }
-      }
-    );
+      res.send({
+        success: true,
+        message: 'Lesson and all reports deleted successfully',
+        lessonDeleted: lessonResult.deletedCount,
+        reportsDeleted: reportResult.deletedCount,
+      });
+    } catch (error) {
+      res.status(500).send({ error: error.message });
+    }
+  }
+);
 
-    // Ignore lesson (Admin)
-    app.patch(
-      '/admin/reported-lessons/:lessonId/ignore',
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const { lessonId } = req.params;
-
-          const result = await reportCollection.updateMany(
-            { lessonId: new ObjectId(lessonId), resolved: { $ne: true } },
-            {
-              $set: {
-                resolved: true,
-                action: 'ignored',
-                resolvedAt: new Date(),
-              },
-            }
-          );
-
-          res.send({ success: true, message: 'Reports ignored, lesson kept' });
-        } catch (error) {
-          res.status(500).send({ error: error.message });
-        }
-      }
-    );
-
-    // Delete lesson (Admin)
-    app.delete(
-      '/admin/reported-lessons/:lessonId',
-      verifyFBToken,
-      verifyAdmin,
-      async (req, res) => {
-        try {
-          const { lessonId } = req.params;
-
-          // Delete lesson
-          const lessonResult = await lessonCollections.deleteOne({
-            _id: new ObjectId(lessonId),
-          });
-
-          // Delete all associated reports
-          const reportResult = await reportCollection.deleteMany({
-            lessonId: new ObjectId(lessonId),
-          });
-
-          res.send({
-            success: true,
-            message: 'Lesson and all reports deleted successfully',
-            lessonDeleted: lessonResult.deletedCount,
-            reportsDeleted: reportResult.deletedCount,
-          });
-        } catch (error) {
-          res.status(500).send({ error: error.message });
-        }
-      }
-    );
 
     // await client.db('admin').command({ ping: 1 });
     console.log(
